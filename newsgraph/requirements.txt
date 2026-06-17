@@ -1,0 +1,9 @@
+# Pipeline (offline)
+feedparser
+spacy
+
+# Persistência
+psycopg[binary]
+
+# Aplicação (online)
+streamlit
