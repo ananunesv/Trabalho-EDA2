@@ -1,6 +1,22 @@
-"""Conexão PostgreSQL (Supabase).
+"""Camada de conexão — lê DATABASE_URL do ambiente e devolve a conexão.
 
-Gerencia a conexão com o banco. String de conexão e credenciais ficam em
-variáveis de ambiente / secrets — nunca no código — lidas tanto pelo GitHub
-Actions (offline) quanto pelo Streamlit (online). Driver: psycopg.
+Nenhuma credencial no código: localmente vem do `.env` (no .gitignore), no
+GitHub Actions vem do secret `DATABASE_URL`.
 """
+
+import os
+
+import psycopg2
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def get_conexao():
+    """Abre e devolve uma conexão psycopg2 com o PostgreSQL (Supabase)."""
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL não definida. Crie um .env local ou um secret no GitHub."
+        )
+    return psycopg2.connect(url)

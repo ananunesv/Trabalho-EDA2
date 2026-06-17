@@ -1,9 +1,15 @@
 # Pipeline (offline)
-feedparser
-spacy
+feedparser==6.0.12
+requests==2.34.2
+spacy==3.8.14
+# modelo PLN: python -m spacy download pt_core_news_sm
 
 # Persistência
-psycopg[binary]
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+
+# Geração de dados fictícios (LLM — Google Gemini)
+google-genai==2.8.0
 
 # Aplicação (online)
 streamlit
