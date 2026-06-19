@@ -4,25 +4,40 @@ A partir de um conjunto de sementes (notícias lidas), percorre a árvore em
 profundidade e calcula, para cada notícia alcançada, o score = gargalo (menor
 peso de aresta) do caminho até a semente mais próxima.
 """
-def enumerar_comunidades(grafo_adj: dict, vertices: set) -> list:
-    visitados = set()
-    comunidades = []
-    
-    for v in vertices:
-        if v not in visitados:
-            comunidade = set()
-            pilha = [v]
-            visitados.add(v)
-            while pilha:
-                atual = pilha.pop()
-                comunidade.add(atual)
-                for vizinho in grafo_adj.get(atual, []):
-                    if vizinho not in visitados:
-                        visitados.add(vizinho)
-                        pilha.append(vizinho)
-            comunidades.append(comunidade)
-    return comunidades
 
-def mapear_vertice_comunidade(comunidades: list) -> dict:
-    """Mapeia cada vértice ao ID da comunidade para busca O(1) no motor."""
-    return {v: i for i, comp in enumerate(comunidades) for v in comp}
+def calcular_scores_gargalo(grafo_adj: dict, sementes: set) -> dict:
+    """
+    Percorre a árvore a partir das sementes e calcula o gargalo para cada nó.
+    
+    grafo_adj: dict no formato {'A': [('B', 10), ('C', 6)], 'B': [('A', 10)]}
+    sementes: set com os IDs das notícias já lidas pelo usuário.
+    retorna: dict com {noticia: score_gargalo}
+    """
+    scores = {}
+    visitados = set()
+    pilha = []
+    
+    # Inicializa a DFS a partir de todas as sementes (notícias lidas)
+    for semente in sementes:
+        if semente in grafo_adj:
+            # Estrutura da pilha: (nó_atual, gargalo_acumulado)
+            # Começa com infinito porque nenhuma aresta foi atravessada ainda
+            pilha.append((semente, float('inf')))
+            visitados.add(semente)
+            scores[semente] = float('inf')  # Sementes têm score máximo/infinito
+            
+    while pilha:
+        atual, gargalo_atual = pilha.pop()
+        
+        # Explora os vizinhos na árvore geradora
+        for vizinho, peso in grafo_adj.get(atual, []):
+            if vizinho not in visitados:
+                visitados.add(vizinho)
+                
+                # O gargalo do caminho é a aresta de menor peso encontrada até aqui
+                gargalo_vizinho = min(gargalo_atual, peso)
+                scores[vizinho] = gargalo_vizinho
+                
+                pilha.append((vizinho, gargalo_vizinho))
+                
+    return scores

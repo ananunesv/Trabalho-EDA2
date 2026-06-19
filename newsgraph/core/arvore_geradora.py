@@ -36,19 +36,28 @@ class UnionFind:
 
 def kruskal_max(arestas: list, vertices: set) -> list:
     """
-    Calcula a floresta geradora máxima.
-    arestas: lista de tuplas (u, v, peso)
-    retorna: lista de tuplas (u, v, peso) que compõem a floresta
+    Calcula a árvore geradora máxima conexa.
+    Garante N-1 arestas e lança erro caso gere uma floresta.
     """
     # Ordenar arestas por peso decrescente para árvore máxima
     arestas_ordenadas = sorted(arestas, key=lambda x: x[2], reverse=True)
     
     uf = UnionFind(vertices)
-    floresta = []
+    arvore = []
+    num_vertices = len(vertices)
     
     for u, v, peso in arestas_ordenadas:
         # Se os vértices estão em componentes diferentes, adiciona a aresta
         if uf.union(u, v):
-            floresta.append((u, v, peso))
+            arvore.append((u, v, peso))
+            # Otimizacao: paramos assim que atingirmos N-1 arestas
+            if len(arvore) == num_vertices - 1:
+                break
+    
+    if len(arvore) != num_vertices - 1:
+        raise ValueError(
+            f"Erro: O grafo é desconexo. Gerou apenas {len(arvore)} arestas "
+            f"em vez das {num_vertices - 1} necessárias para uma árvore única."
+        )
+    return arvore
             
-    return floresta
