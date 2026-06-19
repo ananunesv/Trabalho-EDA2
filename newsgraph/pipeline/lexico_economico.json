@@ -1,0 +1,46 @@
+{
+  "_comentario": "Léxico de termos do mercado financeiro. Edite aqui para expandir ou restringir o escopo.",
+  "_instrucao": "Todos os termos são comparados após lematização pelo spaCy, então variações flexionais (ações/ação, juros/juro) são cobertas automaticamente.",
+
+  "indicadores_macroeconomicos": [
+    "selic", "ipca", "igpm", "igp-m", "cdi", "pib", "inflação", "deflação",
+    "câmbio", "dólar", "euro", "copom", "superávit", "déficit", "balança",
+    "fiscal", "primário", "juro", "taxa", "meta"
+  ],
+
+  "mercado_de_capitais": [
+    "bolsa", "ibovespa", "b3", "ação", "ativo", "papel", "ticker",
+    "dividendo", "rendimento", "yield", "valorização", "desvalorização",
+    "alta", "baixa", "pregão", "fechamento", "abertura", "volume",
+    "liquidez", "volatilidade", "índice", "carteira", "portfólio"
+  ],
+
+  "renda_fixa_e_investimentos": [
+    "tesouro", "cdb", "lca", "lci", "debenture", "fundo", "etf",
+    "renda fixa", "renda variável", "cripto", "bitcoin", "blockchain",
+    "commodity", "petróleo", "minério", "ouro", "soja", "milho"
+  ],
+
+  "instituicoes_e_agentes": [
+    "banco central", "bacen", "cvm", "anbima", "bmf", "petrobras", "vale",
+    "itaú", "bradesco", "santander", "nubank", "xp", "btg", "embraer",
+    "ambev", "wege", "weg", "magazine luiza", "magalu", "localiza",
+    "renner", "jbs", "marfrig", "gerdau", "usiminas", "sabesp", "cemig",
+    "eletrobras", "copel", "engie", "taesa", "transmissão"
+  ],
+
+  "operacoes_e_produtos": [
+    "ipO", "oferta pública", "follow-on", "fusão", "aquisição", "m&a",
+    "resultado", "lucro", "prejuízo", "receita", "ebitda", "margen",
+    "balanço", "demonstração", "trimestre", "semestre", "guidance",
+    "previsão", "meta inflação", "câmbio livre", "swap", "derivativo",
+    "opção", "contrato futuro", "hedge", "short", "long", "posição"
+  ],
+
+  "conjuntura_economica": [
+    "desemprego", "emprego", "pnad", "pme", "crescimento", "recessão",
+    "estagflação", "recuperação", "crise", "choque", "pandemia econômica",
+    "guerra comercial", "tarifá", "exportação", "importação", "reserva",
+    "dívida pública", "teto de gasto", "reforma tributária", "privatização"
+  ]
+}

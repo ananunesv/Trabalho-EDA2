@@ -38,3 +38,4 @@ DESEMPATE = "menor_num_saltos" # mais perto = mais relevante
 # Geração de dados fictícios via LLM (Fase 6) — Google Gemini (free tier)
 MODELO_LLM = "gemini-2.5-flash"  # rápido e gratuito; alternativa mais forte: gemini-2.5-pro
 USUARIOS_POR_LOTE = 8            # usuários por chamada à LLM (mantém a resposta pequena)
+LIMIAR_ESCOPO = 2
