@@ -45,6 +45,31 @@ def salvar_usuario(cur, nome):
     return cur.fetchone()[0]
 
 
+def buscar_usuarios(cur):
+    """Lista os usuários (para o seletor de login do app)."""
+    cur.execute("SELECT id, nome, criado_em FROM usuarios ORDER BY nome;")
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def buscar_usuario_por_id(cur, usuario_id):
+    """Devolve o usuário com esse id (ou None) — usado para restaurar a sessão."""
+    cur.execute("SELECT id, nome FROM usuarios WHERE id = %s;", (usuario_id,))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return {"id": row[0], "nome": row[1]}
+
+
+def buscar_usuario_por_nome(cur, nome):
+    """Devolve o usuário com esse nome (ou None) — usado no login simples."""
+    cur.execute("SELECT id, nome FROM usuarios WHERE nome = %s;", (nome,))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return {"id": row[0], "nome": row[1]}
+
+
 def registrar_interacao(cur, usuario_id, noticia_id, tipo_acao, peso):
     """Registra uma aresta do bipartido (usuário -> notícia) e devolve o `id`."""
     cur.execute(
@@ -96,8 +121,15 @@ def carregar_grafo_dados(cur):
     n_cols = [d[0] for d in cur.description]
     noticias = [dict(zip(n_cols, row)) for row in cur.fetchall()]
 
+    # Só interações de notícias em escopo: senão notícias fora do escopo
+    # financeiro voltariam ao grafo pela ponta das interações.
     cur.execute(
-        "SELECT id, usuario_id, noticia_id, tipo_acao, peso, timestamp FROM interacoes;"
+        """
+        SELECT i.id, i.usuario_id, i.noticia_id, i.tipo_acao, i.peso, i.timestamp
+        FROM   interacoes i
+        JOIN   noticias n ON n.id = i.noticia_id
+        WHERE  n.em_escopo = TRUE;
+        """
     )
     i_cols = [d[0] for d in cur.description]
     interacoes = [dict(zip(i_cols, row)) for row in cur.fetchall()]

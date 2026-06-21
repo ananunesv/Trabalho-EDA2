@@ -1,20 +1,31 @@
 name: coleta
 
-# Pipeline OFFLINE: roda a cada 12h (sem usuário presente).
+# Pipeline OFFLINE: coleta notícias automaticamente a cada 3 horas
+# (e pode ser disparada manualmente em Actions → coleta → Run workflow).
 on:
   schedule:
-    - cron: "0 */12 * * *"
+    - cron: "0 */3 * * *"
   workflow_dispatch:
+
+# Impede que duas coletas rodem ao mesmo tempo (se uma demorar, a próxima espera).
+concurrency:
+  group: coleta
+  cancel-in-progress: false
 
 jobs:
   coleta:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          # Cacheia os downloads do pip (inclui o wheel do modelo spaCy),
+          # acelerando muito as execuções frequentes.
+          cache: pip
+          cache-dependency-path: newsgraph/requirements.txt
 
       - name: Instalar dependências
         working-directory: newsgraph

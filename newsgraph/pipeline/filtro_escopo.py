@@ -64,8 +64,10 @@ _LEXICO: set[str] = _carregar_lexico()
 
 _TICKER = re.compile(r"\b[A-Z]{4}\d{1,2}\b")
 
-# Rótulos de entidade do spaCy considerados financeiramente relevantes
-_LABELS_FINANCEIROS = {"ORG", "MONEY", "PERCENT", "CARDINAL"}
+# Rótulos de entidade do spaCy considerados financeiramente relevantes.
+# Só MONEY e PERCENT: ORG casa qualquer organização (Coldplay, ABRH-SP) e
+# CARDINAL casa qualquer número — ambos geram muitos falsos positivos.
+_LABELS_FINANCEIROS = {"MONEY", "PERCENT"}
 
 # ---------------------------------------------------------------------------
 # Carregamento lazy do spaCy (mesmo padrão do processador_nlp.py)

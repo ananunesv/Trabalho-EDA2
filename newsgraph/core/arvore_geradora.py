@@ -60,4 +60,33 @@ def kruskal_max(arestas: list, vertices: set) -> list:
             f"em vez das {num_vertices - 1} necessárias para uma árvore única."
         )
     return arvore
+
+
+def kruskal_max_floresta(arestas: list, vertices: set) -> list:
+    """Floresta geradora máxima (uma árvore por componente conexa).
+
+    Mesma lógica do Kruskal máximo, mas SEM exigir conexidade: percorre todas as
+    arestas em ordem decrescente de peso e mantém as que ligam componentes
+    distintos. Quando a projeção real é esparsa (notícias sem leitor em comum
+    ficam isoladas), o grafo não é conexo e `kruskal_max` lançaria erro — aqui
+    devolvemos a floresta máxima, que é exatamente a árvore geradora máxima de
+    cada componente.
+
+    Não é detecção de comunidades: não rotulamos nem interpretamos os grupos;
+    apenas preservamos o esqueleto máximo de similaridade que existir. O DFS
+    parte das sementes e alcança o que estiver na mesma árvore delas.
+    """
+    arestas_ordenadas = sorted(arestas, key=lambda x: x[2], reverse=True)
+
+    uf = UnionFind(vertices)
+    floresta = []
+    max_arestas = len(vertices) - 1  # teto: vira uma única árvore se for conexo
+
+    for u, v, peso in arestas_ordenadas:
+        if uf.union(u, v):
+            floresta.append((u, v, peso))
+            if len(floresta) == max_arestas:
+                break
+
+    return floresta
             

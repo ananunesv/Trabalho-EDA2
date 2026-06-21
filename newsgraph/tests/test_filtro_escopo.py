@@ -96,12 +96,12 @@ class TestScoreEconomico(unittest.TestCase):
             tokens=[
                 _make_token("de", is_stop=True),
                 _make_token(".", is_punct=True),
-                _make_token("meta"),   # termo econômico, não stopword
+                _make_token("selic"),   # termo econômico, não stopword
             ],
             ents=[],
         )
-        score = self._run_com_doc(doc, "meta de inflação")
-        self.assertGreaterEqual(score, 1)  # "meta" é do léxico
+        score = self._run_com_doc(doc, "meta de selic")
+        self.assertGreaterEqual(score, 1)  # "selic" é do léxico
 
     def test_lemas_duplicados_contam_uma_vez(self):
         """Mesmo lema repetido no texto conta apenas 1 (usa set)."""
