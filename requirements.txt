@@ -1,0 +1,7 @@
+# Dependências do APP ONLINE (deploy no Streamlit Community Cloud).
+# O Streamlit Cloud procura o requirements.txt na raiz do repositório.
+# A pipeline offline (coleta/PLN/LLM) usa newsgraph/requirements.txt, que é
+# mais completo (feedparser, spaCy, google-genai).
+streamlit
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2

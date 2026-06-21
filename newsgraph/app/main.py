@@ -19,6 +19,15 @@ if _RAIZ not in sys.path:
 
 import streamlit as st
 
+# No Streamlit Cloud não existe .env: traz o DATABASE_URL dos Secrets do app
+# para o os.environ, que é onde persistencia.conexao procura. Localmente o
+# bloco é ignorado (sem secrets) e o .env continua valendo.
+try:
+    if "DATABASE_URL" in st.secrets:
+        os.environ.setdefault("DATABASE_URL", str(st.secrets["DATABASE_URL"]))
+except Exception:
+    pass
+
 from app.login import render_login, restaurar_sessao, logout
 from app.feed import render_feed
 
