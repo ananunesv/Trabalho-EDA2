@@ -64,18 +64,29 @@ def render_feed(usuario_id, usuario_nome):
     st.title("For You")
     st.caption(f"Recomendações para **{usuario_nome}** — quanto mais você interage, melhor fica.")
 
-    # Quantas recomendações mostrar (o botão "Procurar mais notícias" aumenta).
-    quantos = st.session_state.get("quantos", config.TOP_N)
+    # "Pular": notícias que o usuário mandou sumir com "Procurar mais notícias".
+    # Vivem só na sessão (não vão ao banco) e somem do feed sem virar lidas.
+    ocultas = st.session_state.setdefault("ocultas", set())
+    pagina = config.TOP_N
 
     conn = get_conexao()
     try:
         with conn.cursor() as cur:
-            recomendacoes = motor.recomendar(cur, usuario_id, top_n=quantos)
+            # Pede uma a mais do que cabe na página para saber se ainda há próximas.
+            recomendacoes = motor.recomendar(
+                cur, usuario_id, top_n=pagina + 1, ocultas=ocultas
+            )
     finally:
         conn.close()
 
     if not recomendacoes:
-        st.info("Nenhuma notícia disponível. Rode a coleta (pipeline.run_coleta) primeiro.")
+        if ocultas:
+            st.info("Você passou por todas as recomendações do momento.")
+            if st.button("Recomeçar do topo", use_container_width=True):
+                ocultas.clear()
+                st.rerun()
+        else:
+            st.info("Nenhuma notícia disponível. Rode a coleta (pipeline.run_coleta) primeiro.")
         return
 
     if not any(r["personalizada"] for r in recomendacoes):
@@ -84,17 +95,23 @@ def render_feed(usuario_id, usuario_nome):
             "Mostrando as mais recentes — leia uma para começar a personalizar."
         )
 
-    for i, rec in enumerate(recomendacoes):
-        _render_card(rec, i, recomendacoes, usuario_id)
+    tem_mais = len(recomendacoes) > pagina
+    pagina_atual = recomendacoes[:pagina]
 
-    # No fim do feed: se ainda há recomendações além das exibidas, oferece mais.
-    # (len < quantos significa que o ranking acabou — nada novo a mostrar.)
-    if len(recomendacoes) >= quantos:
+    for i, rec in enumerate(pagina_atual):
+        _render_card(rec, i, pagina_atual, usuario_id)
+
+    # "Procurar mais notícias": as exibidas agora ficam invisíveis (sem virar
+    # lidas/dislike) e a próxima leva do ranking surge no lugar.
+    if tem_mais:
         if st.button("Procurar mais notícias", use_container_width=True):
-            st.session_state["quantos"] = quantos + config.TOP_N
+            ocultas.update(r["noticia_id"] for r in pagina_atual)
             st.rerun()
     else:
         st.caption("Você chegou ao fim das recomendações.")
+        if ocultas and st.button("Recomeçar do topo", use_container_width=True):
+            ocultas.clear()
+            st.rerun()
 
 
 def _render_card(rec, indice, recomendacoes, usuario_id):
@@ -105,6 +122,8 @@ def _render_card(rec, indice, recomendacoes, usuario_id):
         linha = rec["fonte"]
         if rec["personalizada"] and rec["score"] is not None:
             linha += f"  ·  afinidade (gargalo): **{rec['score']:.3f}**  ·  {rec['saltos']} salto(s)"
+            if rec.get("recencia") is not None and rec["recencia"] < 1.0:
+                linha += f"  ·  recência ×{rec['recencia']:.2f}"
         st.caption(linha)
 
         trecho, _ = _trecho(rec["resumo"])

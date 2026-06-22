@@ -29,9 +29,10 @@ from core.busca import recomendar_por_dfs
 from core.heap_max import MaxHeap
 
 try:
-    from config import TOP_N
+    from config import TOP_N, FATOR_RECENCIA
 except ImportError:  # fallback se rodar fora do diretório do projeto
     TOP_N = 10
+    FATOR_RECENCIA = 0.8
 
 
 def _floresta_para_grafo(floresta) -> Grafo:
@@ -46,7 +47,40 @@ def _floresta_para_grafo(floresta) -> Grafo:
     return arvore
 
 
-def recomendar_de_dados(dados, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
+def _pesos_por_recencia(dados, usuario_id, sementes, fator=FATOR_RECENCIA):
+    """Peso de recência por semente: a interação mais recente vale 1.0 e as
+    anteriores decaem geometricamente (``fator ** posição``). Usa o timestamp
+    mais recente de cada semente para ordená-las.
+
+    Devolve None (recência desligada — todas valem 1.0) quando ``fator >= 1.0``
+    ou quando não há timestamps utilizáveis (ex.: dados de teste sintéticos).
+    Nesse caso a DFS calcula score_ranking == gargalo, como antes da recência.
+    """
+    if fator >= 1.0:
+        return None
+
+    ult_ts = {}
+    for it in dados["interacoes"]:
+        if it.get("usuario_id") != usuario_id or it.get("peso", 0) <= 0:
+            continue
+        nid = it.get("noticia_id")
+        ts = it.get("timestamp")
+        if nid not in sementes or ts is None:
+            continue
+        if nid not in ult_ts or ts > ult_ts[nid]:
+            ult_ts[nid] = ts
+
+    if not ult_ts:
+        return None
+
+    # Sementes da mais recente para a mais antiga; sem timestamp vão para o fim.
+    com_ts = sorted(ult_ts, key=lambda nid: ult_ts[nid], reverse=True)
+    sem_ts = [s for s in sementes if s not in ult_ts]
+    ordenadas = com_ts + sem_ts
+    return {nid: fator ** pos for pos, nid in enumerate(ordenadas)}
+
+
+def recomendar_de_dados(dados, usuario_id, top_n=TOP_N, limiar_jaccard=0.0, ocultas=None):
     """Executa todo o pipeline de grafos sobre dados em memória.
 
     Args:
@@ -55,12 +89,17 @@ def recomendar_de_dados(dados, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
         usuario_id:     id do usuário-alvo.
         top_n:          tamanho do feed recomendado.
         limiar_jaccard: arestas da projeção com Jaccard <= limiar são filtradas.
+        ocultas:        ids que o usuário pediu para "pular" (botão Procurar mais).
+                        Entram em `lidas` — somem do resultado mas continuam
+                        servindo de ponte na árvore — SEM virar sementes nem
+                        dislike. Conectividade da pipeline preservada.
 
     Returns:
         Lista de dicts ordenada por relevância (maior primeiro):
-            {'noticia_id', 'score', 'saltos'}
+            {'noticia_id', 'score', 'saltos', 'recencia'}
         Vazia se o usuário não tem sementes que alcancem notícias novas.
     """
+    ocultas = set(ocultas or ())
     bipartido = GrafoBipartido.construir(
         dados["usuarios"], dados["noticias"], dados["interacoes"]
     )
@@ -71,7 +110,8 @@ def recomendar_de_dados(dados, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
     leituras = set(bipartido.leituras_de(usuario_id).keys())
     dislikes = bipartido.dislikes_de(usuario_id)
     sementes = leituras - dislikes
-    lidas = leituras | dislikes  # nada que o usuário já viu volta no feed
+    # `ocultas` excluem do resultado (como as lidas) mas NÃO viram sementes.
+    lidas = leituras | dislikes | ocultas  # nada que o usuário já viu/pulou volta
 
     if not sementes:
         return []  # cold start: quem chama decide o fallback
@@ -83,31 +123,38 @@ def recomendar_de_dados(dados, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
     floresta = kruskal_max_floresta(projecao.arestas(), set(projecao.vertices()))
     arvore = _floresta_para_grafo(floresta)
 
-    # DFS a partir das sementes → score = gargalo do caminho; desempate por saltos.
-    recomendacoes = recomendar_por_dfs(arvore, sementes, lidas)
+    # Recência das sementes: a leitura mais recente pesa mais (ver _pesos_por_recencia).
+    pesos_semente = _pesos_por_recencia(dados, usuario_id, sementes)
+
+    # DFS a partir das sementes → gargalo do caminho, ponderado pela recência.
+    recomendacoes = recomendar_por_dfs(arvore, sementes, lidas, pesos_semente)
     if not recomendacoes:
         return []
 
-    # Heap Max ordena pelo par (score, -saltos): score domina, menos saltos
-    # desempata. Tuplas são comparáveis, então o heap funciona sem mudanças.
+    # Heap Max ordena pelo par (score_ranking, -saltos): o gargalo ponderado pela
+    # recência domina, menos saltos desempata. Tuplas são comparáveis, então o
+    # heap funciona sem mudanças.
     heap = MaxHeap()
     for rec in recomendacoes:
-        prioridade = (rec["score"], -rec["saltos"])
+        prioridade = (rec["score_ranking"], -rec["saltos"])
         heap.inserir(rec["noticia"], prioridade)
 
-    saltos_por_noticia = {r["noticia"]: r["saltos"] for r in recomendacoes}
+    por_noticia = {r["noticia"]: r for r in recomendacoes}
 
     resultado = []
     for elemento in heap.top_n(top_n):
         nid = elemento["item"]
-        score, _ = elemento["peso"]
+        r = por_noticia[nid]
+        # 'score' = gargalo puro (afinidade) para exibição; a ordem vem do
+        # score_ranking (gargalo x recência).
         resultado.append(
-            {"noticia_id": nid, "score": score, "saltos": saltos_por_noticia[nid]}
+            {"noticia_id": nid, "score": r["score"], "saltos": r["saltos"],
+             "recencia": r["recencia"]}
         )
     return resultado
 
 
-def recomendar(cur, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
+def recomendar(cur, usuario_id, top_n=TOP_N, limiar_jaccard=0.0, ocultas=None):
     """Recomenda Top-N notícias para `usuario_id`, com metadados, lendo do banco.
 
     Carrega os dados via repositório, roda o pipeline de grafos e enriquece cada
@@ -117,16 +164,20 @@ def recomendar(cur, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
     notícias em escopo mais recentes (popularidade temporal) — sem recomendação
     personalizada, mas com feed útil para a primeira leitura fechar o ciclo.
 
+    `ocultas`: ids que o usuário pulou (botão "Procurar mais notícias"). Somem do
+    feed sem virar lidas/dislike; valem também para o fallback de cold start.
+
     Returns:
         Lista de dicts: {'noticia_id', 'titulo', 'resumo', 'link', 'fonte',
-                         'score', 'saltos', 'personalizada'}.
+                         'score', 'saltos', 'recencia', 'personalizada'}.
     """
     from persistencia import repositorio
 
+    ocultas = set(ocultas or ())
     dados = repositorio.carregar_grafo_dados(cur)
     por_id = {n["id"]: n for n in dados["noticias"]}
 
-    recs = recomendar_de_dados(dados, usuario_id, top_n, limiar_jaccard)
+    recs = recomendar_de_dados(dados, usuario_id, top_n, limiar_jaccard, ocultas)
 
     if recs:
         saida = []
@@ -134,14 +185,15 @@ def recomendar(cur, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
             n = por_id.get(r["noticia_id"])
             if not n:
                 continue
-            saida.append(_montar_item(n, r["score"], r["saltos"], personalizada=True))
+            saida.append(_montar_item(n, r["score"], r["saltos"], personalizada=True,
+                                      recencia=r.get("recencia")))
         return saida
 
     # --- Fallback (cold start): mais recentes em escopo, excluindo já lidas. ---
     bipartido = GrafoBipartido.construir(
         dados["usuarios"], dados["noticias"], dados["interacoes"]
     )
-    lidas = set(bipartido.leituras_de(usuario_id).keys()) | bipartido.dislikes_de(usuario_id)
+    lidas = set(bipartido.leituras_de(usuario_id).keys()) | bipartido.dislikes_de(usuario_id) | ocultas
 
     noticias_feed = repositorio.buscar_noticias(cur)  # já vem por recência
     saida = []
@@ -154,7 +206,7 @@ def recomendar(cur, usuario_id, top_n=TOP_N, limiar_jaccard=0.0):
     return saida
 
 
-def _montar_item(noticia, score, saltos, personalizada):
+def _montar_item(noticia, score, saltos, personalizada, recencia=None):
     """Normaliza um dict de notícia + métricas no formato que o app consome."""
     return {
         "noticia_id": noticia["id"],
@@ -164,5 +216,6 @@ def _montar_item(noticia, score, saltos, personalizada):
         "fonte": noticia.get("fonte", ""),
         "score": score,
         "saltos": saltos,
+        "recencia": recencia,
         "personalizada": personalizada,
     }

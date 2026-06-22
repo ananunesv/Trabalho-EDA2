@@ -21,6 +21,86 @@ from core.arvore_geradora import kruskal_max_floresta
 from recomendacao.motor import recomendar_de_dados
 
 
+def _sementes_e_lidas(bip, usuario_id):
+    leituras = set(bip.leituras_de(usuario_id).keys())
+    dislikes = bip.dislikes_de(usuario_id)
+    return leituras - dislikes, leituras | dislikes
+
+
+def recomendar_vizinhanca_direta(dados, usuario_id, top_n=10):
+    """BASELINE para comparação (Critério 5): recomenda só pelos vizinhos
+    DIRETOS das sementes na projeção (1 salto), sem árvore e sem gargalo.
+
+    Score de cada candidata = maior Jaccard direto até alguma semente. É a
+    abordagem ingênua "me recomende o que é parecido com o que eu já li" —
+    serve de contraponto à pipeline (árvore geradora + DFS por gargalo).
+    """
+    bip = GrafoBipartido.construir(dados["usuarios"], dados["noticias"], dados["interacoes"])
+    sementes, lidas = _sementes_e_lidas(bip, usuario_id)
+    if not sementes:
+        return []
+
+    projecao = projetar(bip)
+    melhores = {}
+    for s in sementes:
+        if s not in projecao.adj:
+            continue
+        for viz, peso in projecao.vizinhos(s):
+            if viz in lidas:
+                continue
+            if peso > melhores.get(viz, 0.0):
+                melhores[viz] = peso
+
+    ordenado = sorted(melhores.items(), key=lambda kv: kv[1], reverse=True)[:top_n]
+    return [{"noticia_id": nid, "score": sc} for nid, sc in ordenado]
+
+
+def comparar_abordagens(dados, top_n=10):
+    """Compara pipeline (árvore+gargalo) x baseline (vizinhança direta).
+
+    Agrega, sobre todos os usuários que têm pelo menos uma semente:
+      - alcance médio de candidatas de cada método;
+      - sobreposição média do Top-N;
+      - fração das recomendações da pipeline que estão a 2+ saltos (ou seja,
+        que a baseline de vizinhança direta NUNCA conseguiria sugerir).
+    """
+    usuarios = [u["id"] for u in dados["usuarios"]]
+
+    alc_arvore = alc_direta = 0
+    sobrepostos = total_topn = 0
+    multi_salto = total_recs = 0
+    n_users = 0
+
+    for uid in usuarios:
+        recs = recomendar_de_dados(dados, uid, top_n=top_n)
+        if not recs:
+            continue
+        n_users += 1
+
+        # alcance total de candidatas (não limitado ao top_n)
+        alc_arvore += len(recomendar_de_dados(dados, uid, top_n=10**9))
+        alc_direta += len(recomendar_vizinhanca_direta(dados, uid, top_n=10**9))
+
+        base = recomendar_vizinhanca_direta(dados, uid, top_n=top_n)
+        ids_arvore = {r["noticia_id"] for r in recs}
+        ids_base = {r["noticia_id"] for r in base}
+        sobrepostos += len(ids_arvore & ids_base)
+        total_topn += len(ids_arvore)
+
+        multi_salto += sum(1 for r in recs if r["saltos"] >= 2)
+        total_recs += len(recs)
+
+    if n_users == 0:
+        return None
+    return {
+        "usuarios_com_sementes": n_users,
+        "alcance_medio_arvore": round(alc_arvore / n_users, 1),
+        "alcance_medio_direta": round(alc_direta / n_users, 1),
+        "sobreposicao_topn_pct": round(100 * sobrepostos / total_topn, 1) if total_topn else 0.0,
+        "recs_multi_salto_pct": round(100 * multi_salto / total_recs, 1) if total_recs else 0.0,
+    }
+
+
 def _componentes(arestas, vertices):
     """Conta componentes conexas de uma lista de arestas via união ingênua."""
     pai = {v: v for v in vertices}
@@ -120,6 +200,15 @@ def relatorio(cur, usuario_id=None):
     print(f"  Componentes: {m['componentes']} | Maior árvore: {m['maior_arvore']} notícias "
           f"| Arestas na árvore: {m['arestas_arvore']}")
 
+    c = comparar_abordagens(dados, top_n=10)
+    if c:
+        print("\n-- Pipeline (árvore+gargalo) x baseline (vizinhança direta) --")
+        print(f"  Usuários com sementes: {c['usuarios_com_sementes']}")
+        print(f"  Alcance médio de candidatas: {c['alcance_medio_arvore']} (árvore) "
+              f"vs {c['alcance_medio_direta']} (vizinhança direta)")
+        print(f"  Sobreposição do Top-10: {c['sobreposicao_topn_pct']}%")
+        print(f"  Recomendações a 2+ saltos (a baseline NÃO alcança): {c['recs_multi_salto_pct']}%")
+
     if usuario_id is not None:
         recs = recomendar_de_dados(dados, usuario_id, top_n=5)
         print(f"\n-- Top-5 para o usuário {usuario_id} --")
@@ -131,6 +220,8 @@ def relatorio(cur, usuario_id=None):
 
 if __name__ == "__main__":
     import os
+    from dotenv import load_dotenv
+    load_dotenv()  # garante DATABASE_URL do .env antes de checar
     if not os.environ.get("DATABASE_URL"):
         print("SKIP: DATABASE_URL não definida. Defina o .env para rodar a análise sobre o banco.")
     else:

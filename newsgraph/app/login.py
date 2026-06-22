@@ -98,7 +98,7 @@ def restaurar_sessao():
 
 def logout():
     """Limpa a sessão e volta para a tela de login."""
-    for chave in ("usuario_id", "usuario_nome", "recs", "idx", "quantos"):
+    for chave in ("usuario_id", "usuario_nome", "recs", "idx", "quantos", "ocultas"):
         st.session_state.pop(chave, None)
     st.query_params.clear()
     st.rerun()

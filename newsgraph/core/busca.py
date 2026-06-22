@@ -1,23 +1,37 @@
 
 
-def recomendar_por_dfs(arvore, sementes, lidas):
+def recomendar_por_dfs(arvore, sementes, lidas, pesos_semente=None):
     """
     Percorre a árvore geradora conexa (Kruskal) a partir das sementes usando DFS.
-    
+
     Regras de Negócio:
     1. Parte apenas de sementes (interações positivas).
-    2. Calcula o score (gargalo = menor peso do caminho).
-    3. Registra a distância em saltos para desempate (menos saltos = maior prioridade).
-    4. Ignora textos já lidos (positivos ou negativos) no resultado final.
+    2. Calcula o gargalo (menor peso do caminho) de cada notícia não-lida.
+    3. Pondera o gargalo pela RECÊNCIA da semente de origem: score_ranking =
+       gargalo * peso_semente. Assim o topo do feed acompanha o que o usuário leu
+       por último, em vez de ficar preso na maior afinidade de todo o histórico.
+    4. Quando uma notícia é alcançável por mais de uma semente, fica com o caminho
+       de MAIOR score_ranking; saltos só desempata (caminhos de score igual).
+    5. Ignora textos já lidos (positivos ou negativos) no resultado final.
+
+    Args:
+        pesos_semente: dict {semente: peso_recencia em (0, 1]}. Ausente/None →
+            todas as sementes valem 1.0 (score_ranking == gargalo; comportamento
+            idêntico ao de antes da recência — é o caso dos testes sintéticos).
     """
+    lidas = set(lidas)
+
     # Dicionário para armazenar o melhor estado de cada notícia não-lida.
-    # Formato: { 'Noticia_X': {'score_gargalo': float, 'saltos': int} }
+    # Formato: { 'Noticia_X': {'gargalo', 'saltos', 'recencia', 'score_ranking'} }
     resultados = {}
 
     for semente in sementes:
         # Verifica se a semente existe na árvore antes de buscar (segurança)
         if semente not in arvore.vertices():
             continue
+
+        # Peso de recência desta semente (1.0 quando não há ponderação).
+        w = 1.0 if pesos_semente is None else pesos_semente.get(semente, 1.0)
 
         # Pilha para a DFS: armazena (nó_atual, saltos_acumulados, gargalo_atual, nó_pai)
         # Inicializamos o gargalo como 'inf' pois o primeiro passo definirá o teto.
@@ -28,20 +42,21 @@ def recomendar_por_dfs(arvore, sementes, lidas):
 
             # Processa o nó atual se ele não for uma notícia que o usuário já leu
             if atual not in lidas:
-                if atual not in resultados:
-                    # Primeira vez que alcançamos esta notícia
-                    resultados[atual] = {'score_gargalo': gargalo, 'saltos': saltos}
-                else:
-                    estado_atual = resultados[atual]
-                    
-                    # Regra do Caminho: Prioriza a semente mais próxima (menos saltos)
-                    if saltos < estado_atual['saltos']:
-                        resultados[atual] = {'score_gargalo': gargalo, 'saltos': saltos}
-                    
-                    # Desempate: Se a distância for igual, prefere o caminho com o maior gargalo
-                    elif saltos == estado_atual['saltos']:
-                        if gargalo > estado_atual['score_gargalo']:
-                            resultados[atual]['score_gargalo'] = gargalo
+                score_ranking = gargalo * w
+                anterior = resultados.get(atual)
+                # Fica com o caminho de maior score_ranking; em empate, menos saltos.
+                if (
+                    anterior is None
+                    or score_ranking > anterior['score_ranking']
+                    or (score_ranking == anterior['score_ranking']
+                        and saltos < anterior['saltos'])
+                ):
+                    resultados[atual] = {
+                        'gargalo': gargalo,
+                        'saltos': saltos,
+                        'recencia': w,
+                        'score_ranking': score_ranking,
+                    }
 
             # Expansão DFS: Adiciona os vizinhos na pilha
             for vizinho, peso in arvore.vizinhos(atual):
@@ -51,13 +66,17 @@ def recomendar_por_dfs(arvore, sementes, lidas):
                     novo_gargalo = min(gargalo, float(peso))
                     pilha.append((vizinho, saltos + 1, novo_gargalo, atual))
 
-    # Formata a saída em uma lista de dicionários pronta para ser enviada à MaxHeap
+    # Formata a saída em uma lista de dicionários pronta para ser enviada à MaxHeap.
+    # 'score' continua sendo o gargalo puro (afinidade) para exibição; o motor
+    # ordena por 'score_ranking' (gargalo ponderado pela recência).
     lista_recomendacoes = []
     for noticia, dados in resultados.items():
         lista_recomendacoes.append({
             'noticia': noticia,
-            'score': dados['score_gargalo'],
-            'saltos': dados['saltos']
+            'score': dados['gargalo'],
+            'saltos': dados['saltos'],
+            'recencia': dados['recencia'],
+            'score_ranking': dados['score_ranking'],
         })
 
     return lista_recomendacoes

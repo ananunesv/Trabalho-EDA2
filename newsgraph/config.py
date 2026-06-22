@@ -35,6 +35,13 @@ TOP_N = 10                     # tamanho do feed recomendado
 CRITERIO_SCORE = "gargalo"     # min do caminho até a semente
 DESEMPATE = "menor_num_saltos" # mais perto = mais relevante
 
+# Recência das sementes: a interação mais recente vale 1.0; as anteriores
+# decaem geometricamente (FATOR_RECENCIA ** posição). Sem isso, o topo do feed
+# fica "preso" na notícia de maior gargalo de todo o histórico, porque ler/curtir
+# só ACRESCENTA sementes e nunca reduz o score de quem já estava no topo.
+# 1.0 = desliga a recência (volta ao comportamento antigo); menor = topo muda mais.
+FATOR_RECENCIA = 0.8
+
 # Geração de dados fictícios via LLM (Fase 6) — Google Gemini (free tier)
 MODELO_LLM = "gemini-2.5-flash"  # rápido e gratuito; alternativa mais forte: gemini-2.5-pro
 USUARIOS_POR_LOTE = 8            # usuários por chamada à LLM (mantém a resposta pequena)

@@ -54,6 +54,21 @@ PYTHONPATH=. python -m pipeline.gerador_dados          # ~40 usuários fictício
 PYTHONPATH=. streamlit run app/main.py
 ```
 
+### Opção rápida: dados de exemplo (sem coleta nem LLM)
+
+Para um repositório **autocontido** — rodar sem credenciais do Supabase e sem
+chamar RSS/LLM — use um PostgreSQL local e carregue o seed versionado
+([persistencia/seed.sql](persistencia/seed.sql): 44 usuários, 70 notícias em
+escopo e 481 interações fictícias):
+
+```bash
+psql "$DATABASE_URL" -f persistencia/init_db.sql   # cria as tabelas
+psql "$DATABASE_URL" -f persistencia/seed.sql      # popula com os dados de exemplo
+PYTHONPATH=. streamlit run app/main.py             # já recomenda
+```
+
+O seed é gerado por `persistencia/gerar_seed.py` a partir do banco real.
+
 ### O arquivo `.env`
 
 As credenciais nunca ficam no código — moram no `.env` (que está no
@@ -101,12 +116,18 @@ PYTHONPATH=. python -m unittest tests.teste_jaccard tests.test_busca tests.test_
 PYTHONPATH=. python tests/test_arvore_geradora.py
 PYTHONPATH=. python tests/test_filtro_escopo.py
 
-# Relatório de análise (cobertura, Jaccard, árvore) — precisa do banco
+# Relatório de análise (cobertura, Jaccard, árvore, pipeline x baseline) — precisa do banco
 PYTHONPATH=. python -m analise.metricas
 
 # Re-pontuar o escopo das notícias já gravadas (após ajustar o léxico)
 PYTHONPATH=. python -m pipeline.rescore_escopo --apply
+
+# Regerar o seed.sql a partir do banco atual
+PYTHONPATH=. python -m persistencia.gerar_seed
 ```
+
+A **interpretação dos resultados** (com números reais e a comparação contra a
+baseline de vizinhança direta) está em **[analise/ANALISE.md](analise/ANALISE.md)**.
 
 > **Importante (Streamlit):** ao editar arquivos de `app/`, pare o servidor
 > (Ctrl+C) e rode de novo. O auto-reload do Streamlit recarrega o `main.py`, mas
@@ -298,26 +319,42 @@ sementes.
 A partir das **sementes** (notícias que o usuário leu positivamente), uma busca
 em profundidade percorre a árvore. Para cada notícia não-lida calcula:
 
-- **score = gargalo** = o **menor peso de aresta** no caminho da semente até ela;
-- **saltos** = número de arestas percorridas até a semente mais próxima.
+- **gargalo** = o **menor peso de aresta** no caminho da semente até ela;
+- **saltos** = número de arestas percorridas até a semente;
+- **score (ranking) = gargalo × recência da semente** (ver decisão abaixo).
 
 Como a estrutura é uma **árvore**, existe **um único caminho** entre quaisquer dois
 nós (sem ciclos) — então o gargalo e o número de saltos são exatos e a DFS não
-precisa de marcação de visitados complexa (basta não voltar para o pai).
+precisa de marcação de visitados complexa (basta não voltar para o pai). Quando uma
+notícia é alcançável por **mais de uma semente**, fica com o caminho de **maior
+score**; saltos só desempata (caminhos de score igual).
 
 **Decisão: gargalo (mínimo do caminho), não soma nem produto.** A intuição é
 *"uma recomendação é tão confiável quanto o elo mais fraco da cadeia de
 similaridade que a liga ao que você já gostou"*. É uma medida conservadora:
 basta uma ligação fraca no caminho para derrubar o score. As notícias lidas são
 **atravessadas** (para alcançar as novas) mas **nunca recomendadas** (excluídas da
-saída). Empate de gargalo é desfeito por **menos saltos** (semente mais perto).
+saída). Empate de score é desfeito por **menos saltos** (semente mais perto).
+
+**Decisão: ponderar o gargalo pela recência da semente.** As sementes de um
+usuário **só crescem** (ler/curtir nunca remove um sinal positivo), e somar
+sementes nunca *diminui* o gargalo de quem já estava no topo. Sem recência, o #1
+do feed ficaria **preso** na notícia de maior afinidade de todo o histórico até
+ser aberta. Então cada semente recebe um peso: a interação **mais recente** vale
+`1.0` e as anteriores decaem geometricamente (`FATOR_RECENCIA ** posição`, com
+`FATOR_RECENCIA = 0.8` em [config.py](config.py)). O ranking passa a usar
+`gargalo × recência`, de modo que o topo acompanha o que o usuário leu por último.
+`FATOR_RECENCIA = 1.0` desliga a recência (volta ao gargalo puro) — é o valor de
+comparação do Critério 5. O gargalo "cru" continua sendo o número de **afinidade**
+exibido no cartão.
 
 #### g) Heap Max — Top-N ([core/heap_max.py](core/heap_max.py))
 
 As notícias candidatas entram num **heap binário de máximo** (a estrutura de dados
 adicional exigida, além do grafo) com prioridade igual à tupla
-**`(score, −saltos)`**: o gargalo domina e, em empate, menos saltos sobe. Extrair
-o Top-N custa **O(N log M)** (M = candidatas), sem ordenar a lista inteira.
+**`(score, −saltos)`** — onde `score` é o gargalo ponderado pela recência: o score
+domina e, em empate, menos saltos sobe. Extrair o Top-N custa **O(N log M)**
+(M = candidatas), sem ordenar a lista inteira.
 
 **Decisão: heap (e não `sorted`).** Para um feed de tamanho N pequeno sobre M
 candidatas, o heap dá o Top-N em tempo de extração logarítmico e deixa a
@@ -357,9 +394,20 @@ Jaccard. O LLM é usado **só na geração de dados**, nunca na recomendação.
 1. monta bipartido → projeção → floresta geradora máxima;
 2. **sementes** = notícias lidas positivamente **menos** as com dislike (abrir
    para ler conta como `clique`; um dislike posterior tira a notícia das sementes);
-3. roda o DFS, empilha no Heap Max, extrai o Top-N e **exclui as lidas**;
-4. **cold start:** usuário sem interações recebe as notícias em escopo mais
+3. calcula o **peso de recência** de cada semente (mais recente = `1.0`, ver 4.5f);
+4. roda o DFS com esses pesos, empilha no Heap Max, extrai o Top-N e **exclui as
+   lidas** (e as *ocultas*, abaixo);
+5. **cold start:** usuário sem interações recebe as notícias em escopo mais
    recentes (até ter histórico para personalizar).
+
+**"Pular" sem marcar como lida (`ocultas`).** O botão *"Procurar mais notícias"*
+do feed manda as recomendações atuais sumirem e traz as próximas. Para isso o
+motor aceita um conjunto `ocultas`: esses ids entram na **mesma exclusão das
+lidas** — somem do resultado **mas continuam atravessados como ponte na árvore**,
+então as notícias "atrás" delas continuam alcançáveis. Diferente de um dislike,
+elas **não viram sementes nem sinal negativo** e **não vão ao banco** (vivem só na
+sessão). É o reaproveitamento direto do mecanismo "atravessa mas não recomenda" da
+DFS (4.5f) — nenhuma mudança no núcleo.
 
 Separado em camada **pura** (`recomendar_de_dados`, testável sem banco) e camada
 de **banco** (`recomendar`, que enriquece o resultado com título/resumo/link).
@@ -369,13 +417,18 @@ de **banco** (`recomendar`, que enriquece o resultado com título/resumo/link).
 - **Login** ([app/login.py](app/login.py)): nome de usuário ou criação de conta;
   o id fica na URL (query param) para o login sobreviver ao F5.
 - **Feed** ([app/feed.py](app/feed.py)): lista o Top-N em cartões (título, fonte,
-  afinidade/gargalo, saltos, trecho). "Ler mais" abre a notícia inteira em
-  parágrafos, com navegação por setas ‹ › entre as recomendações e os botões de
+  afinidade/gargalo, saltos, recência, trecho). "Ler mais" abre a notícia inteira
+  em parágrafos, com navegação por setas ‹ › entre as recomendações e os botões de
   reação (gostei/compartilhar/não tem a ver) no fim. O texto é escapado para o
   Streamlit não interpretar `US$`, `*` etc. como markdown/LaTeX.
+- **Procurar mais notícias:** troca a página inteira — as recomendações exibidas
+  ficam **invisíveis** (entram em `ocultas`, ver 4.8) e a próxima leva do ranking
+  aparece no lugar, sem repetir. Não conta como leitura nem dislike: é só "essas
+  não me interessam agora". Ao chegar ao fim, um botão **"Recomeçar do topo"**
+  limpa as ocultas. Esse estado vive só na sessão (um F5 ou o logout zera).
 - **Ciclo de aprendizado:** cada interação grava no banco; ao voltar ao feed ou
-  recarregar, as lidas somem e novas entram — a prova visível de que a pipeline
-  de grafos funciona.
+  recarregar, as lidas somem e novas entram, e o topo acompanha a leitura mais
+  recente (recência) — a prova visível de que a pipeline de grafos funciona.
 
 ---
 
@@ -387,6 +440,8 @@ de **banco** (`recomendar`, que enriquece o resultado com título/resumo/link).
 | Jaccard ponderado por leitores | coocorrência real + intensidade da ação; determinístico; reduz ao clássico |
 | Floresta geradora máxima | dados reais são desconexos; preserva o esqueleto sem detectar comunidades |
 | Score por gargalo | mede o elo mais fraco da cadeia de similaridade; conservador |
+| Recência das sementes | sementes só crescem; sem isso o #1 trava — recência destrava o topo |
+| Ocultar ("Procurar mais") | pula sem virar lida/dislike; reusa o "atravessa mas não recomenda" da DFS |
 | Heap Max para o Top-N | estrutura adicional exigida; Top-N sem ordenar tudo |
 | Union-find no Kruskal | detecção de ciclo quase O(1) |
 | Filtro de escopo por spaCy | elemento de PLN; mantém o grafo só com finanças |
