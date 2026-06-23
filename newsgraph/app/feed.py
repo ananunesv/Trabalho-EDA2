@@ -7,6 +7,7 @@ curtir, compartilhar ou marcar como sem relação. Cada interação volta ao ban
 via repositório e refina as sementes da próxima recomendação.
 """
 
+import json
 import re
 
 import streamlit as st
@@ -169,12 +170,17 @@ def _render_leitura(usuario_id):
     st.divider()
     nid = rec["noticia_id"]
     c1, c2, c3 = st.columns(3)
-    if c1.button("Gostei", key=f"r_like_{nid}", type="primary"):
+    if c1.button("Gostei", key=f"r_like_{nid}", type="primary", use_container_width=True):
         _registrar(usuario_id, nid, "like")
-    if c2.button("Compartilhar", key=f"r_share_{nid}"):
-        _registrar(usuario_id, nid, "compartilhar")
-    if c3.button("Não tem a ver", key=f"r_dislike_{nid}"):
+    if c2.button("Compartilhar", key=f"r_share_{nid}", type="primary", use_container_width=True):
+        _compartilhar(usuario_id, nid, rec["link"])
+    if c3.button("Não tem a ver", key=f"r_dislike_{nid}", type="primary", use_container_width=True):
         _registrar(usuario_id, nid, "dislike")
+
+    # Após "Compartilhar": painel de copiar link (só para a notícia aberta agora).
+    compart = st.session_state.get("compartilhar")
+    if compart and compart[0] == nid:
+        _painel_copiar_link(compart[1])
 
 
 def _abrir_leitura(recomendacoes, indice, usuario_id):
@@ -188,6 +194,7 @@ def _abrir_leitura(recomendacoes, indice, usuario_id):
 def _fechar_leitura():
     st.session_state["recs"] = None
     st.session_state["idx"] = None
+    st.session_state.pop("compartilhar", None)
 
 
 def _gravar(usuario_id, noticia_id, tipo_acao):
@@ -205,8 +212,75 @@ def _gravar(usuario_id, noticia_id, tipo_acao):
         conn.close()
 
 
+def _compartilhar(usuario_id, noticia_id, link):
+    """Compartilhar: registra a interação (sinal forte, peso 5) e abre o painel de
+    copiar link no próximo run.
+
+    A cópia em si precisa de um CLIQUE do usuário (o navegador bloqueia escrita no
+    clipboard fora de um gesto), por isso não copiamos automático aqui — guardamos
+    a URL e mostramos um botão "Copiar link" (ver _painel_copiar_link).
+    """
+    _gravar(usuario_id, noticia_id, "compartilhar")
+    st.session_state["compartilhar"] = (noticia_id, link)
+    st.rerun()
+
+
+def _painel_copiar_link(url):
+    """Botão que copia `url` no clipboard ao ser clicado, com balão "URL copiada!".
+
+    Roda dentro de um iframe (st.iframe): no clique tenta a Clipboard API e cai
+    num <textarea> + execCommand('copy') de reserva — ambos funcionam porque o
+    clique É um gesto do usuário. A URL fica visível como rede de segurança caso
+    o navegador bloqueie tudo (basta copiar à mão).
+    """
+    dados = json.dumps(url)  # vira uma string JS segura (escapa aspas/barras)
+    st.iframe(
+        f"""<!doctype html><html><head><meta charset="utf-8"></head>
+        <body style="margin:0;font-family:'Source Sans Pro',sans-serif">
+          <button id="b" style="width:100%;padding:0.55rem 1rem;border:none;
+            border-radius:0.5rem;background:#ff4b4b;color:#fff;font-weight:600;
+            font-size:0.95rem;cursor:pointer">🔗 Copiar link da notícia</button>
+          <div id="m" style="margin-top:8px;font-size:0.85rem;word-break:break-all"></div>
+          <script>
+          const url = {dados};
+          const b = document.getElementById("b");
+          const m = document.getElementById("m");
+          function ok() {{
+            b.textContent = "✓ URL copiada!";
+            b.style.background = "#16a34a";
+            m.style.color = "#16a34a";
+            m.textContent = url;
+          }}
+          function falha() {{
+            m.style.color = "#b91c1c";
+            m.textContent = "Não consegui copiar automaticamente — copie à mão: " + url;
+          }}
+          async function copiar() {{
+            try {{ await navigator.clipboard.writeText(url); ok(); return; }} catch (e) {{}}
+            const ta = document.createElement("textarea");
+            ta.value = url; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.focus(); ta.select();
+            let copiou = false;
+            try {{ copiou = document.execCommand("copy"); }} catch (e) {{}}
+            document.body.removeChild(ta);
+            copiou ? ok() : falha();
+          }}
+          b.addEventListener("click", copiar);
+          </script>
+        </body></html>""",
+        height=90,
+    )
+
+
+_TOAST_REACAO = {
+    "like": ("👍", "Você curtiu esta notícia!"),
+    "dislike": ("🚫", "Anotado — vamos evitar parecidas."),
+}
+
+
 def _registrar(usuario_id, noticia_id, tipo_acao):
     """Grava a interação. No feed, recarrega; na leitura, segue na mesma página."""
     _gravar(usuario_id, noticia_id, tipo_acao)
-    st.toast(f"Interação '{tipo_acao}' registrada.")
+    emoji, msg = _TOAST_REACAO.get(tipo_acao, ("✅", f"Interação '{tipo_acao}' registrada."))
+    st.toast(msg, icon=emoji)
     st.rerun()

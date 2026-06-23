@@ -147,7 +147,7 @@ baseline de vizinhança direta) está em **[analise/ANALISE.md](analise/ANALISE.
 | PLN | **spaCy** (`pt_core_news_sm`) | limpeza, lematização, stopwords e NER |
 | LLM | **google-genai** (Gemini 2.5 Flash) | gera usuários fictícios e interações coerentes |
 | Interface | **Streamlit** | login, feed e botões de interação |
-| Automação | **GitHub Actions** | roda a coleta a cada 12h |
+| Automação | **GitHub Actions** | roda a coleta a cada 3h |
 
 **Núcleo de grafos: nenhuma biblioteca.** Grafo, Jaccard, Kruskal, union-find,
 DFS e Heap Max são implementados à mão em `core/` — as bibliotecas acima cobrem
@@ -173,7 +173,7 @@ execução**; o banco de dados é o único ponto de contato entre eles.
         (GitHub Actions, sem usuário)               (Streamlit, com usuário)
 ```
 
-- **Offline** roda agendado (Actions, 12h em 12h) ou manualmente, sem ninguém
+- **Offline** roda agendado (Actions, de 3 em 3 horas) ou manualmente, sem ninguém
   presente: é caro (rede, spaCy, LLM) e não pode travar a navegação.
 - **Online** só lê dados já limpos e responde em poucos segundos.
 
@@ -234,7 +234,7 @@ RSS (4 portais)
   → grafo_bipartido       (usuário↔notícia, com peso)
   → projecao + jaccard    (texto↔texto, similaridade)
   → arvore_geradora       (Kruskal: floresta geradora máxima)
-  → busca                 (DFS a partir das lidas; score = gargalo)
+  → busca                 (DFS a partir das sementes; score = gargalo × recência)
   → heap_max              (Top-N)
   → app (feed)            (mostra; cada interação volta ao banco)
 ```
@@ -247,8 +247,9 @@ Representação: **dicionário de dicionários** `{u: {v: peso}}`.
 
 **Decisão: lista de adjacência (e não matriz).** O grafo é **esparso** — cada
 notícia se liga só a algumas dezenas de outras (as que têm leitor em comum), não
-a todas. Numa matriz de adjacência o custo de espaço é sempre **O(V²)** (com 300
-notícias, 90 000 células, quase todas zero) e percorrer os vizinhos de um vértice
+a todas. Numa matriz de adjacência o custo de espaço é sempre **O(V²)** (com as 300
+notícias-alvo do dataset, 90 000 células, quase todas zero; o acervo real hoje tem
+~136 em escopo) e percorrer os vizinhos de um vértice
 custa **O(V)**. Com lista de adjacência o espaço é **O(V + E)** (só as arestas que
 existem) e percorrer vizinhos é **O(grau)** — exatamente o que o DFS e o Kruskal
 precisam. Usamos *dict de dict* (em vez de *dict de lista*) para também ter
@@ -383,9 +384,11 @@ vértices nem arestas, e até as interações fictícias sobre elas são ignorad
 
 Sem usuários, a projeção nasce vazia (duas notícias nunca teriam leitor em comum).
 O **Gemini 2.5 Flash** gera ~40 personas com perfis variados e, para cada uma,
-8–20 interações coerentes com o perfil (saída estruturada validada por Pydantic).
-Perfis parecidos leem notícias parecidas → cria a **coocorrência** que alimenta o
-Jaccard. O LLM é usado **só na geração de dados**, nunca na recomendação.
+8–20 interações coerentes com o perfil (saída estruturada validada por Pydantic),
+em **lotes de 8 usuários** por chamada (`config.USUARIOS_POR_LOTE`) e com o
+*thinking* do modelo desligado (custo/latência). Perfis parecidos leem notícias
+parecidas → cria a **coocorrência** que alimenta o Jaccard. O LLM é usado **só na
+geração de dados**, nunca na recomendação.
 
 ### 4.8 Motor de recomendação ([recomendacao/motor.py](recomendacao/motor.py))
 
@@ -421,6 +424,11 @@ de **banco** (`recomendar`, que enriquece o resultado com título/resumo/link).
   em parágrafos, com navegação por setas ‹ › entre as recomendações e os botões de
   reação (gostei/compartilhar/não tem a ver) no fim. O texto é escapado para o
   Streamlit não interpretar `US$`, `*` etc. como markdown/LaTeX.
+- **Compartilhar (copiar link):** além de registrar a interação (peso 5), o botão
+  abre um painel **"Copiar link da notícia"** que copia a URL para a área de
+  transferência (Clipboard API, com reserva `textarea`+`execCommand`) e confirma
+  com um balão **"URL copiada!"**. A cópia acontece no **clique** do botão porque
+  o navegador bloqueia escrita no clipboard fora de um gesto do usuário.
 - **Procurar mais notícias:** troca a página inteira — as recomendações exibidas
   ficam **invisíveis** (entram em `ocultas`, ver 4.8) e a próxima leva do ranking
   aparece no lugar, sem repetir. Não conta como leitura nem dislike: é só "essas
@@ -432,7 +440,36 @@ de **banco** (`recomendar`, que enriquece o resultado com título/resumo/link).
 
 ---
 
-## 5. Resumo das decisões de projeto
+## 5. Resultados / Números-chave
+
+*Snapshot do banco em 22/06/2026, reproduzível com `PYTHONPATH=. python -m analise.metricas`.
+A interpretação completa está em [analise/ANALISE.md](analise/ANALISE.md). Os valores
+absolutos sobem com a coleta automática; o que é **estrutural** não muda.*
+
+| Métrica | Valor |
+|---|---|
+| Usuários / notícias em escopo / interações | 47 / 136 / ~800 |
+| Cobertura da projeção | 73/136 (53,7%) — 1 árvore gigante + 63 notícias ainda sem leitor em comum |
+| Maior árvore geradora (Kruskal) | 73 notícias, 72 arestas |
+| Jaccard médio das similaridades | ~0,13 (maioria fraca → justifica o Kruskal máximo) |
+| **Recomendações a 2+ saltos** | **93,7%** — a vizinhança direta (baseline) nunca alcança |
+| Top-10 diferente da baseline | ~43% (57,2% de sobreposição) |
+| Alcance vs baseline | 60,4 vs 59,7 (empate — o ganho é estrutural, não de alcance bruto) |
+
+**O que isso prova.** O valor da pipeline não é alcançar *mais* notícias, e sim
+alcançar as *certas que a vizinhança direta não vê*: **93,7% das recomendações vivem
+a 2+ saltos** das sementes, com a relevância controlada pelo gargalo — uma notícia
+distante só sobe no ranking se **todo** o caminho até ela for forte.
+
+**Aprende com a interação** (exemplo real, usuário 57): ao curtir a notícia do topo,
+ela sai do feed e o ranking se reorganiza — `[33, 90, 42, 20, 57]` → `[90, 20, 42, 57, 230]`.
+E o **gargalo manda sobre a distância**: uma notícia a **3 saltos** (gargalo 0,548)
+aparece **à frente** de uma a **2 saltos** (gargalo 0,536). Detalhes em
+[ANALISE.md](analise/ANALISE.md) §4–5.
+
+---
+
+## 6. Resumo das decisões de projeto
 
 | Decisão | Por quê |
 |---|---|
@@ -448,7 +485,7 @@ de **banco** (`recomendar`, que enriquece o resultado com título/resumo/link).
 | LLM só para dados fictícios | cria coocorrência; algoritmos seguem 100% do grupo |
 | Banco como única fronteira | separa o caro (offline) do interativo (online) |
 
-## 6. Estruturas e algoritmos implementados do zero
+## 7. Estruturas e algoritmos implementados do zero
 
 Grafo (lista de adjacência) · Grafo bipartido · Jaccard ponderado · Projeção ·
 Kruskal (árvore/floresta geradora máxima) · Union-find · DFS (travessia +
