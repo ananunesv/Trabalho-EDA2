@@ -182,6 +182,14 @@ def _render_leitura(usuario_id):
     if compart and compart[0] == nid:
         _painel_copiar_link(compart[1])
 
+    # Feedback persistente de "Gostei"/"Não tem a ver" na notícia aberta agora.
+    reacao = st.session_state.get("reacao")
+    if reacao and reacao[0] == nid:
+        if reacao[1] == "like":
+            st.success("👍 Você curtiu esta notícia — vou priorizar parecidas no seu feed.")
+        elif reacao[1] == "dislike":
+            st.warning("🚫 Marcada como “sem relação” — vou evitar parecidas.")
+
 
 def _abrir_leitura(recomendacoes, indice, usuario_id):
     """Abrir para ler conta como 'clique' (sinal fraco positivo — o antigo 'Li')."""
@@ -195,6 +203,7 @@ def _fechar_leitura():
     st.session_state["recs"] = None
     st.session_state["idx"] = None
     st.session_state.pop("compartilhar", None)
+    st.session_state.pop("reacao", None)
 
 
 def _gravar(usuario_id, noticia_id, tipo_acao):
@@ -222,6 +231,7 @@ def _compartilhar(usuario_id, noticia_id, link):
     """
     _gravar(usuario_id, noticia_id, "compartilhar")
     st.session_state["compartilhar"] = (noticia_id, link)
+    st.session_state.pop("reacao", None)
     st.rerun()
 
 
@@ -281,6 +291,10 @@ _TOAST_REACAO = {
 def _registrar(usuario_id, noticia_id, tipo_acao):
     """Grava a interação. No feed, recarrega; na leitura, segue na mesma página."""
     _gravar(usuario_id, noticia_id, tipo_acao)
+    # Marca a reação para um aviso persistente na notícia aberta (e fecha o painel
+    # de compartilhar, se estava aberto — mostra só o feedback da última ação).
+    st.session_state["reacao"] = (noticia_id, tipo_acao)
+    st.session_state.pop("compartilhar", None)
     emoji, msg = _TOAST_REACAO.get(tipo_acao, ("✅", f"Interação '{tipo_acao}' registrada."))
     st.toast(msg, icon=emoji)
     st.rerun()
